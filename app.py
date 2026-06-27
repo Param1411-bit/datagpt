@@ -1,10 +1,7 @@
 # ============================ DataGPT · APP ENTRY ============================
 # Single entry point. Keep this thin: it wires modules together and routes to
-# the selected stage. All real work lives in core/ , ui/ and stages/ .
-#
 # Run from this directory:   streamlit run app.py
-# (Streamlit adds this folder to sys.path, so `from core...`, `from ui...`,
-#  `from stages...` resolve. Each subpackage has an empty __init__.py.)
+
 
 import streamlit as st
 
