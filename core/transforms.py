@@ -26,7 +26,10 @@ def apply_cleaning(df: pd.DataFrame, suggestions: list) -> tuple:
 
             elif t == "drop_col" and col in df.columns:
                 df.drop(columns=[col], inplace=True)
-                log.append(f"Dropped '{col}' (>50% null). [Completeness]")
+                if sug.get("dim") == "Tidiness":
+                    log.append(f"Dropped '{col}' (constant / zero-variance). [Tidiness]")
+                else:
+                    log.append(f"Dropped '{col}' (>50% null). [Completeness]")
 
             elif t == "to_datetime" and col in df.columns:
                 before_nulls = int(df[col].isna().sum())
@@ -90,9 +93,57 @@ def apply_cleaning(df: pd.DataFrame, suggestions: list) -> tuple:
                             f"'{col}' nulls → mode ('{mode_s.iloc[0]}'). [Completeness]"
                         )
 
+            elif t == "fix_range" and col in df.columns:
+                lo    = sug.get("lo")
+                hi    = sug.get("hi")
+                sents = sug.get("sentinels", [])
+                s = pd.to_numeric(df[col], errors="coerce")
+
+                bad = pd.Series(False, index=s.index)
+                if lo is not None:
+                    bad |= s < lo
+                if hi is not None:
+                    bad |= s > hi
+                if sents:
+                    bad |= s.isin(sents)
+                n_bad = int(bad.sum())
+
+                s = s.mask(bad)                 # impossible values → NaN
+                med = s.median()                # median of the VALID values only
+                if pd.isna(med):
+                    log.append(
+                        f"⚠ '{col}': all values out of range — cannot impute, left as NaN. [Accuracy]"
+                    )
+                    df[col] = s
+                else:
+                    s = s.fillna(med)
+                    if sug.get("to_int"):
+                        s = s.round().astype("int64")
+                        df[col] = s
+                        log.append(
+                            f"'{col}': {n_bad} impossible value(s) → NaN → median "
+                            f"({med:.4g}); rounded to int. [Accuracy]"
+                        )
+                    else:
+                        df[col] = s
+                        log.append(
+                            f"'{col}': {n_bad} impossible value(s) → NaN → median "
+                            f"({med:.4g}). [Accuracy]"
+                        )
+
+            elif t == "to_integer" and col in df.columns:
+                s = pd.to_numeric(df[col], errors="coerce")
+                if s.notna().all():
+                    df[col] = s.round().astype("int64")
+                    log.append(f"'{col}' → int64 (was float; all values whole). [Validity]")
+                else:
+                    # keep NaNs intact with pandas' nullable integer dtype
+                    df[col] = s.round().astype("Int64")
+                    log.append(f"'{col}' → integer (nullable Int64, NaNs preserved). [Validity]")
+
             elif t == "range_flag":
                 log.append(
-                    f"⚠ '{col}' has negative values — flagged, manual review needed. [Accuracy]"
+                    f"⚠ '{col}' has out-of-range values — flagged, manual review needed. [Accuracy]"
                 )
 
         except Exception as exc:
