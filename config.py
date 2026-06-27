@@ -28,5 +28,7 @@ STEP_ICONS = {
     "drop_col":        ("❌", "Drop column"),
     "fill_median":     ("🩹", "Impute with median"),
     "fill_mode":       ("🩹", "Impute with mode"),
+    "fix_range":       ("🛠", "Fix impossible values → impute"),
+    "to_integer":      ("🔢", "Convert → integer"),
     "range_flag":      ("⚠",  "Range violation — manual review"),
 }
