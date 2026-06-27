@@ -1,7 +1,4 @@
 # ============================ CONFIG ============================
-# Single source of truth for app-wide constants. Mirrors the AxT bot's CONFIG
-# block — everything tunable lives here, not scattered through the logic.
-
 # ---- Upload guards ----------------------------------------------------------
 # Streamlit Community Cloud gives ~1 GB RAM and pandas needs several× the file
 # size in memory, so reject oversized inputs before the full-frame passes run.
