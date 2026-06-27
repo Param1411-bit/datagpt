@@ -275,22 +275,110 @@ def assess_data(df: pd.DataFrame) -> dict:
                 "reason": f"'{c}' is {pct}% null. {extra}",
             })
 
-    # 6. Semantic range violations  [Accuracy]
-    NON_NEG = ["age", "price", "cost", "count", "qty", "quantity",
-               "revenue", "sales", "salary", "amount", "weight",
-               "height", "duration", "distance", "volume", "units"]
+    # 6. Constant (zero-variance) columns → drop  [Tidiness]
+    #    A single repeated value carries zero information for analysis/modelling.
+    for c in df.columns:
+        if c in already:
+            continue
+        if df[c].nunique(dropna=False) <= 1:
+            suggestions.append({
+                "type": "drop_col", "col": c, "dim": "Tidiness",
+                "reason": (
+                    f"'{c}' holds a single constant value across all {len(df):,} rows "
+                    "(zero variance). It cannot explain or predict anything — drop it."
+                ),
+            })
+            already.add(c)
+
+    # 7. Impossible / out-of-domain values + disguised-missing sentinels  [Accuracy]
+    #    Known bounds per column-name pattern. Values outside the bound, OR equal to
+    #    a classic sentinel code (999, -99, …) that is also a far outlier, are
+    #    treated as impossible → set to NaN → median-imputed (and rounded to int
+    #    where the field is inherently whole-numbered, e.g. age).
+    DOMAIN_BOUNDS = {                  # name-substring: (low, high, force_integer)
+        "age":      (0, 60, True),
+        "rating":   (0, 5,   False),
+        "discount": (0, 1,   False),
+        "margin":   (0, 1,   False),
+        "percent":  (0, 100, False),
+    }
+    SENTINELS = [-9999, -999, -99, 999, 9999, 99999, 999999]
+    NON_NEG = ["age", "price", "cost", "count", "qty", "quantity", "revenue",
+               "sales", "salary", "amount", "weight", "height", "duration",
+               "distance", "volume", "units", "refund"]
+
     for c in num_cols:
-        if any(h in c.lower() for h in NON_NEG):
-            n_neg = int((df[c] < 0).sum())
-            if n_neg:
-                suggestions.append({
-                    "type": "range_flag", "col": c, "dim": "Accuracy",
-                    "reason": (
-                        f"'{c}' has {n_neg} negative values. "
-                        "Domain definition says this column must be non-negative — "
-                        "likely data entry errors or sign-convention bugs."
-                    ),
-                })
+        if c in already:
+            continue
+        s = df[c].dropna()
+        if s.empty:
+            continue
+        lname = c.lower()
+
+        lo = hi = None
+        force_int = False
+        matched = False
+        for key, (klo, khi, kint) in DOMAIN_BOUNDS.items():
+            if key in lname:
+                lo, hi, force_int, matched = klo, khi, kint, True
+                break
+        if not matched and any(h in lname for h in NON_NEG):
+            lo, matched = 0, True       # non-negative lower bound only
+
+        # counts/ages are whole by definition — enforce integer on the fix
+        if matched and any(k in lname for k in
+                           ("age", "count", "qty", "quantity", "units",
+                            "people", "rooms", "children")):
+            force_int = True
+
+        # sentinel = a classic missing-value code that is also a clear outlier
+        p99 = float(s.quantile(0.99))
+        sentinels_here = [v for v in SENTINELS
+                          if (s == v).any() and abs(v) > abs(p99) * 1.5]
+
+        n_oor = 0
+        if lo is not None:
+            n_oor += int((s < lo).sum())
+        if hi is not None:
+            n_oor += int((s > hi).sum())
+        n_sent = int(s.isin(sentinels_here).sum())
+
+        if matched and (n_oor or n_sent):
+            bound_txt = f"[{lo}, {hi}]" if hi is not None else f">= {lo}"
+            sent_txt = (f", plus {n_sent} disguised-missing sentinel(s) {sentinels_here}"
+                        if n_sent else "")
+            int_txt = " Values are rounded to whole numbers." if force_int else ""
+            suggestions.append({
+                "type": "fix_range", "col": c, "dim": "Accuracy",
+                "lo": lo, "hi": hi, "sentinels": sentinels_here, "to_int": force_int,
+                "reason": (
+                    f"'{c}' has {n_oor} value(s) outside the valid domain {bound_txt}"
+                    f"{sent_txt}. These are impossible (e.g. negative age, age=999) and "
+                    "they distort min/max/mean/describe. The fix replaces them with NaN, "
+                    f"then imputes the median of the valid values.{int_txt}"
+                ),
+            })
+            already.add(c)
+
+    # 8. Whole-number floats that should be integers  [Validity]
+    INT_LIKE = ["age", "count", "qty", "quantity", "units", "year",
+                "people", "rooms", "children", "_id", "id_"]
+    for c in num_cols:
+        if c in already or "float" not in str(df[c].dtype):
+            continue
+        if not any(h in c.lower() for h in INT_LIKE):
+            continue
+        s = df[c].dropna()
+        if not s.empty and bool((s % 1 == 0).all()):
+            suggestions.append({
+                "type": "to_integer", "col": c, "dim": "Validity",
+                "reason": (
+                    f"'{c}' is float dtype but every value is a whole number. "
+                    "Integer dtype is correct for a count/age-style field and prevents "
+                    "misleading fractional values like 39.4."
+                ),
+            })
+            already.add(c)
 
     a["suggestions"] = suggestions
     return a
